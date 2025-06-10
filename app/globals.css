@@ -1,0 +1,19 @@
+/*
+  This is the correct and complete globals.css file for our project.
+  It does three things:
+  1. Imports the required stylesheet for the react-big-calendar library.
+  2. Injects the base, component, and utility styles from Tailwind CSS.
+  3. Adds our one custom style for the "live preview" event on the calendar.
+*/
+
+@import 'react-big-calendar/lib/css/react-big-calendar.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Add a style for the semi-transparent preview event */
+.rbc-event.preview-event {
+  background-color: rgba(59, 130, 246, 0.5); /* Semi-transparent blue */
+  border: 1px dashed white;
+}
