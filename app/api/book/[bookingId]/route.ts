@@ -1,24 +1,21 @@
-// app/api/book/[bookingId]/route.ts (Final, Verified, and Correct Version)
+// app/api/book/[bookingId]/route.ts (Final, Simplest, and Correct Version)
 import { NextResponse, NextRequest } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
 import { verifyUser } from '@/lib/serverAuth';
 
-// This is the correct way to type the second argument for dynamic routes
-interface RouteContext {
-    params: {
-        bookingId: string;
-    }
-}
-
-// This handler will update an existing booking
-export async function PUT(request: NextRequest, context: RouteContext) {
+// This is the correct way to type the function signature for a dynamic route handler.
+// We destructure `params` directly from the second argument.
+export async function PUT(
+    request: NextRequest,
+    { params }: { params: { bookingId: string } }
+) {
     const verification = await verifyUser(request);
     if (!verification.success) {
         return NextResponse.json({ success: false, message: verification.message }, { status: verification.status });
     }
     const uid = verification.user!.uid;
-    const { bookingId } = context.params;
+    const { bookingId } = params; // Get bookingId directly from the destructured params
 
     try {
         const { ovenId, startTime, endTime, title } = await request.json();
@@ -66,7 +63,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
         return NextResponse.json({ success: true, message: 'Booking updated successfully' });
 
-    } catch (error: any) { // Explicitly type 'error' to fix linting warning
+    } catch (error: any) {
         return NextResponse.json({ success: false, message: error.message }, { status: 400 });
     }
 }
