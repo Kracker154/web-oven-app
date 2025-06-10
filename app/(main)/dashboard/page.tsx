@@ -1,6 +1,5 @@
-// app/(main)/dashboard/page.tsx (FINAL VERSION - Corrected Data Submission)
+// app/(main)/dashboard/page.tsx
 "use client";
-
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Calendar, momentLocalizer, Views, View } from 'react-big-calendar';
 import moment from 'moment';
@@ -20,34 +19,28 @@ export default function DashboardPage() {
     const [selectedOven, setSelectedOven] = useState<Oven | null>(null);
     const [bookings, setBookings] = useState<Booking[]>([]);
     const [myUpcomingBookings, setMyUpcomingBookings] = useState<Booking[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false); // Changed from isLoading
     const [formData, setFormData] = useState<FormData>({ startDate: '', startTime: '', endDate: '', endTime: '', purpose: '' });
     const [previewEvent, setPreviewEvent] = useState<Booking | null>(null);
     const [date, setDate] = useState(new Date());
     const [view, setView] = useState<View>(Views.WEEK);
 
-    const fetchOvens = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const res = await fetch('/api/admin/ovens');
-            if (!res.ok) throw new Error('Failed to fetch ovens');
-            const data = await res.json();
-            setOvens(data.data);
-        } catch (error: any) {
-            toast.error(error.message);
-        } finally {
-            setIsLoading(false);
-        }
-    }, []);
-
     useEffect(() => {
+        const fetchOvens = async () => {
+            try {
+                const res = await fetch('/api/admin/ovens');
+                if (!res.ok) throw new Error('Failed to fetch ovens');
+                const data = await res.json();
+                setOvens(data.data);
+            } catch (error: any) { // FIX
+                toast.error(error.message);
+            }
+        };
         fetchOvens();
-    }, [fetchOvens]);
+    }, []);
 
     const fetchBookingsForOven = useCallback(async (ovenId: string) => {
         if (!auth.currentUser) return;
-        setIsLoading(true);
         try {
             const idToken = await auth.currentUser.getIdToken();
             const res = await fetch(`/api/bookings?ovenId=${ovenId}`, {
@@ -64,10 +57,8 @@ export default function DashboardPage() {
                 end: new Date(b.end),
             }));
             setBookings(formattedBookings);
-        } catch (error: any) {
+        } catch (error: any) { // FIX
             toast.error(error.message);
-        } finally {
-            setIsLoading(false);
         }
     }, []);
     
@@ -130,7 +121,6 @@ export default function DashboardPage() {
     const handleSubmitBooking = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!selectedOven || !previewEvent || !formData.purpose.trim() || !auth.currentUser) return;
-        
         setIsSubmitting(true);
         const { start, end } = previewEvent;
         try {
@@ -138,23 +128,15 @@ export default function DashboardPage() {
             const res = await fetch('/api/book', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-                // THIS IS THE FIX: We send the raw purpose from the form, not the preview event's title.
-                body: JSON.stringify({ 
-                    ovenId: selectedOven.id, 
-                    startTime: start.toISOString(), 
-                    endTime: end.toISOString(), 
-                    title: formData.purpose 
-                }),
+                body: JSON.stringify({ ovenId: selectedOven.id, startTime: start.toISOString(), endTime: end.toISOString(), title: formData.purpose }),
             });
-
             const data = await res.json();
             if (!res.ok) throw new Error(data.message);
-            
             toast.success("Booking confirmed!");
             fetchBookingsForOven(selectedOven.id);
             setPreviewEvent(null);
             setFormData({ startDate: '', startTime: '', endDate: '', endTime: '', purpose: '' });
-        } catch (error: any) {
+        } catch (error: any) { // FIX
             toast.error(`Booking failed: ${error.message}`);
         } finally {
             setIsSubmitting(false);
@@ -163,7 +145,7 @@ export default function DashboardPage() {
     
     const handleCancelBooking = async (bookingId: string) => {
         if (!confirm("Are you sure?") || !auth.currentUser || !selectedOven) return;
-        setIsLoading(true);
+        setIsSubmitting(true); // Re-use isSubmitting
         try {
             const idToken = await auth.currentUser.getIdToken(true);
             const res = await fetch('/api/cancel', {
@@ -173,13 +155,12 @@ export default function DashboardPage() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.message);
-            
             toast.success("Booking cancelled.");
             fetchBookingsForOven(selectedOven.id);
-        } catch (error: any) {
+        } catch (error: any) { // FIX
             toast.error(`Cancellation failed: ${error.message}`);
         } finally {
-            setIsLoading(false);
+            setIsSubmitting(false); // Re-use isSubmitting
         }
     };
 
@@ -207,12 +188,7 @@ export default function DashboardPage() {
                         <h2 className="text-xl font-semibold border-b pb-2">Create Booking</h2>
                         <div>
                             <label htmlFor="oven-select" className="block text-sm font-medium text-gray-700">1. Select Oven</label>
-                            <select
-                                id="oven-select"
-                                className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                                value={selectedOven?.id || ''}
-                                onChange={(e) => setSelectedOven(ovens.find(o => o.id === e.target.value) || null)}
-                            >
+                            <select id="oven-select" className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 rounded-md" value={selectedOven?.id || ''} onChange={(e) => setSelectedOven(ovens.find(o => o.id === e.target.value) || null)} >
                                 <option value="" disabled>-- Select an Oven --</option>
                                 {ovens.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                             </select>
@@ -229,7 +205,7 @@ export default function DashboardPage() {
                             <input type="text" name="purpose" placeholder="e.g., Curing Epoxy Samples" value={formData.purpose} onChange={handleFormChange} required className="mt-1 w-full rounded-md border-gray-300 shadow-sm" />
                         </div>
                         <button type="submit" disabled={!previewEvent || !formData.purpose || isSubmitting} className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400">
-                           {isSubmitting ? "Submitting..." : "Check & Book"}
+                           {isSubmitting ? "Processing..." : "Check & Book"}
                         </button>
                     </form>
                 </div>
@@ -248,24 +224,8 @@ export default function DashboardPage() {
                     ) : <p className="text-sm text-gray-500">You have no upcoming bookings.</p>}
                 </div>
             </div>
-
             <div className="md:col-span-8 lg:col-span-9 bg-white rounded-lg shadow-lg p-4">
-                <Calendar
-                    localizer={localizer}
-                    events={calendarEvents}
-                    startAccessor="start"
-                    endAccessor="end"
-                    style={{ height: '85vh' }}
-                    date={date}
-                    onNavigate={handleNavigate}
-                    view={view}
-                    onView={handleView}
-                    views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
-                    selectable
-                    onSelectSlot={handleSelectSlot}
-                    eventPropGetter={eventPropGetter}
-                    dayLayoutAlgorithm="no-overlap"
-                />
+                <Calendar localizer={localizer} events={calendarEvents} startAccessor="start" endAccessor="end" style={{ height: '85vh' }} date={date} onNavigate={handleNavigate} view={view} onView={handleView} views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]} selectable onSelectSlot={handleSelectSlot} eventPropGetter={eventPropGetter} dayLayoutAlgorithm="no-overlap" />
             </div>
         </div>
     );
