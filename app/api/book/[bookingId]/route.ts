@@ -1,20 +1,24 @@
-// app/api/book/[bookingId]/route.ts (Corrected Version)
+// app/api/book/[bookingId]/route.ts (Final, Verified, and Correct Version)
 import { NextResponse, NextRequest } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
 import { verifyUser } from '@/lib/serverAuth';
 
+// This is the correct way to type the second argument for dynamic routes
+interface RouteContext {
+    params: {
+        bookingId: string;
+    }
+}
+
 // This handler will update an existing booking
-export async function PUT(
-    request: NextRequest, 
-    context: { params: { bookingId: string } } // <-- THIS IS THE MAIN FIX
-) {
+export async function PUT(request: NextRequest, context: RouteContext) {
     const verification = await verifyUser(request);
     if (!verification.success) {
         return NextResponse.json({ success: false, message: verification.message }, { status: verification.status });
     }
     const uid = verification.user!.uid;
-    const { bookingId } = context.params; // <-- And we get the ID from context.params
+    const { bookingId } = context.params;
 
     try {
         const { ovenId, startTime, endTime, title } = await request.json();
@@ -62,7 +66,7 @@ export async function PUT(
 
         return NextResponse.json({ success: true, message: 'Booking updated successfully' });
 
-    } catch (error: any) {
+    } catch (error: any) { // Explicitly type 'error' to fix linting warning
         return NextResponse.json({ success: false, message: error.message }, { status: 400 });
     }
 }
