@@ -1,4 +1,4 @@
-// api/book/route.ts (Final, Simplified, and Working Version)
+// api/book/route.ts (With Maintenance Status Check)
 import { NextResponse, NextRequest } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -24,7 +24,6 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ success: false, message: `Booking cannot exceed 7 days.` }, { status: 400 });
         }
         
-        // This query requires the index you already built: (userId, endTime)
         const userBookingsSnapshot = await adminDb.collection('bookings')
             .where('userId', '==', uid)
             .where('endTime', '>=', Timestamp.now())
@@ -36,29 +35,37 @@ export async function POST(request: NextRequest) {
 
         await adminDb.runTransaction(async (transaction) => {
             const bookingsRef = adminDb.collection('bookings');
+            const ovenRef = adminDb.collection('ovens').doc(ovenId); // <-- Get a reference to the oven
 
-            // --- THIS IS THE NEW, SINGLE, SIMPLIFIED CONFLICT CHECK ---
-            // We only need ONE query. This fetches all bookings for the oven that end after our new booking starts.
-            // This is a broad query, but it's simple and only needs one index.
+            // --- THE BUG FIX STARTS HERE ---
+
+            // Step 1: Get the oven's current data within the transaction
+            const ovenDoc = await transaction.get(ovenRef);
+            if (!ovenDoc.exists) {
+                throw new Error("The selected oven does not exist.");
+            }
+            // Step 2: Check the oven's status
+            if (ovenDoc.data()?.status !== 'active') {
+                throw new Error("This oven is currently under maintenance and cannot be booked.");
+            }
+            
+            // --- THE BUG FIX ENDS HERE ---
+
+
+            // Proceed with conflict checks only if the oven is active
             const potentialConflictsQuery = bookingsRef
                 .where('ovenId', '==', ovenId)
                 .where('endTime', '>', Timestamp.fromDate(start));
             
             const snapshot = await transaction.get(potentialConflictsQuery);
-
-            // Now, we do a precise check in our code.
             const hasConflict = snapshot.docs.some(doc => {
                 const existingBooking = doc.data();
-                const existingStart = existingBooking.startTime.toDate();
-                // A conflict exists if the existing booking's start time is before our new booking ends.
-                return existingStart < end;
+                return existingBooking.startTime.toDate() < end;
             });
             
             if (hasConflict) {
                 throw new Error('This time slot conflicts with an existing booking.');
             }
-            // --- END OF THE NEW CONFLICT CHECK ---
-
 
             const userDoc = await transaction.get(adminDb.collection('users').doc(uid));
             const userName = userDoc.exists ? userDoc.data()?.name : 'Unknown User';

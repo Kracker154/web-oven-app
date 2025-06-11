@@ -1,4 +1,4 @@
-// app/(main)/dashboard/page.tsx (Complete code with Real-time and Edit features)
+// app/(main)/dashboard/page.tsx
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -9,9 +9,9 @@ import { useAuth } from '@/context/AuthContext';
 import { auth, db } from '@/lib/firebaseClient';
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 
-// --- Helper Types ---
+// --- Helper Types (with createdAt) ---
 type Oven = { id: string; name: string; status: 'active' | 'maintenance' };
-type Booking = { id: string; start: Date; end: Date; title: string; userId: string; isPreview?: boolean };
+type Booking = { id: string; start: Date; end: Date; title: string; userId: string; createdAt: Date; isPreview?: boolean };
 type FormData = { startDate: string; startTime: string; endDate: string; endTime: string; purpose: string; };
 
 const localizer = momentLocalizer(moment);
@@ -46,7 +46,6 @@ export default function DashboardPage() {
         fetchOvens();
     }, []);
 
-    // Real-time listener for bookings
     useEffect(() => {
         if (!selectedOven?.id) {
             setBookings([]);
@@ -64,6 +63,7 @@ export default function DashboardPage() {
                     start: data.startTime.toDate(),
                     end: data.endTime.toDate(),
                     userId: data.userId,
+                    createdAt: data.createdAt.toDate(), // <-- Make sure to get createdAt
                 });
             });
             setBookings(bookingsFromDb);
@@ -75,7 +75,6 @@ export default function DashboardPage() {
         return () => unsubscribe();
     }, [selectedOven]);
 
-    // Update "My Bookings" list when the main bookings list changes
     useEffect(() => {
         if (user && bookings) {
             const now = new Date();
@@ -98,7 +97,9 @@ export default function DashboardPage() {
                     id: editingBooking ? editingBooking.id : 'preview', 
                     start, end,
                     title: `${formData.purpose || "New Booking"} (by ${user.name})`,
-                    userId: user.uid, isPreview: true,
+                    userId: user.uid, 
+                    createdAt: editingBooking ? editingBooking.createdAt : new Date(),
+                    isPreview: true,
                 });
             } else {
                 setPreviewEvent(null);
@@ -112,7 +113,6 @@ export default function DashboardPage() {
         setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
     };
     
-    // Function to clear the form and exit editing mode
     const resetForm = () => {
         setEditingBooking(null);
         setPreviewEvent(null);
@@ -121,7 +121,7 @@ export default function DashboardPage() {
 
     const handleSelectSlot = useCallback((slotInfo: { start: Date; end: Date; }) => {
         if (!selectedOven) { toast.error("Please select an oven first."); return; }
-        resetForm(); // Reset form when creating a new booking
+        resetForm();
         setFormData({
             startDate: moment(slotInfo.start).format('YYYY-MM-DD'),
             startTime: moment(slotInfo.start).format('HH:mm'),
@@ -132,7 +132,13 @@ export default function DashboardPage() {
     }, [selectedOven]);
     
     const handleSelectEvent = useCallback((booking: Booking) => {
-        if (user?.uid === booking.userId) {
+        // Anyone can click an event to see the details, but only some can edit
+        const now = new Date();
+        const oneHour = 60 * 60 * 1000;
+        const isWithinGracePeriod = now.getTime() - booking.createdAt.getTime() < oneHour;
+        const canEdit = user?.isAdmin || (user?.uid === booking.userId && isWithinGracePeriod);
+        
+        if (canEdit) {
             setEditingBooking(booking);
             setFormData({
                 startDate: moment(booking.start).format('YYYY-MM-DD'),
@@ -142,9 +148,9 @@ export default function DashboardPage() {
                 purpose: booking.title.split(' (by')[0],
             });
         } else {
-            toast(`This slot is booked by another user.`);
+            toast(`This booking was made by another user or the 1-hour edit period has passed.`);
         }
-    }, [user?.uid]);
+    }, [user]);
 
     // --- Booking Submission & Cancellation ---
     const handleSubmitBooking = async (e: React.FormEvent) => {
@@ -169,12 +175,10 @@ export default function DashboardPage() {
                     title: formData.purpose 
                 }),
             });
-
             const data = await res.json();
             if (!res.ok) throw new Error(data.message);
-            
             toast.success(isUpdating ? "Booking updated!" : "Booking confirmed!");
-            resetForm(); // Clear form and exit editing mode on success
+            resetForm();
         } catch (error: any) {
             toast.error(`Operation failed: ${error.message}`);
         } finally {
@@ -183,7 +187,7 @@ export default function DashboardPage() {
     };
     
     const handleCancelBooking = async (bookingId: string) => {
-        if (!confirm("Are you sure?") || !auth.currentUser || !selectedOven) return;
+        if (!confirm("Are you sure you want to delete this booking?") || !auth.currentUser) return;
         setIsSubmitting(true);
         try {
             const idToken = await auth.currentUser.getIdToken(true);
@@ -206,11 +210,7 @@ export default function DashboardPage() {
 
     // --- Calendar Rendering ---
     const calendarEvents = useMemo(() => {
-        // Don't show the original event being edited, show the preview instead.
-        const filteredBookings = editingBooking 
-            ? bookings.filter(b => b.id !== editingBooking.id) 
-            : bookings;
-
+        const filteredBookings = editingBooking ? bookings.filter(b => b.id !== editingBooking.id) : bookings;
         return previewEvent ? [...filteredBookings, previewEvent] : filteredBookings;
     }, [bookings, previewEvent, editingBooking]);
 
@@ -261,16 +261,24 @@ export default function DashboardPage() {
                     <h2 className="text-xl font-semibold border-b pb-2 mb-4">Your Upcoming Bookings</h2>
                     {myUpcomingBookings.length > 0 ? (
                         <ul className="space-y-3 max-h-60 overflow-y-auto">
-                            {myUpcomingBookings.map(b => (
+                            {myUpcomingBookings.map(b => {
+                                const now = new Date();
+                                const oneHour = 60 * 60 * 1000;
+                                const isWithinGracePeriod = now.getTime() - b.createdAt.getTime() < oneHour;
+                                const canModify = user?.isAdmin || (user?.uid === b.userId && isWithinGracePeriod);
+                                
+                                return (
                                 <li key={b.id} className="text-sm p-2 bg-blue-50 rounded-md">
                                     <p className="font-bold">{b.title.split(' (by')[0]}</p>
                                     <p className="text-gray-600">{moment(b.start).format('ddd, MMM D, h:mm a')} - {moment(b.end).format('h:mm a')}</p>
-                                    <div className="flex gap-4 mt-1">
-                                        <button onClick={() => handleSelectEvent(b)} className="text-blue-600 hover:text-blue-800 text-xs">Edit</button>
-                                        <button onClick={() => handleCancelBooking(b.id)} className="text-red-600 hover:text-red-800 text-xs">Delete</button>
-                                    </div>
+                                    {canModify && (
+                                        <div className="flex gap-4 mt-1">
+                                            <button onClick={() => handleSelectEvent(b)} className="text-blue-600 hover:text-blue-800 text-xs">Edit</button>
+                                            <button onClick={() => handleCancelBooking(b.id)} className="text-red-600 hover:text-red-800 text-xs">Delete</button>
+                                        </div>
+                                    )}
                                 </li>
-                            ))}
+                            )})}
                         </ul>
                     ) : <p className="text-sm text-gray-500">You have no upcoming bookings.</p>}
                 </div>
