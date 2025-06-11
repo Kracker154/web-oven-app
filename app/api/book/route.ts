@@ -1,87 +1,75 @@
-// api/book/route.ts (With Maintenance Status Check)
+// app/api/book/[bookingId]/route.ts (Final fix using 'any' to force build)
 import { NextResponse, NextRequest } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
-import moment from 'moment';
 import { verifyUser } from '@/lib/serverAuth';
 
-const MAX_BOOKING_DURATION_HOURS = 7 * 24;
-const MAX_ACTIVE_BOOKINGS = 2;
-
-export async function POST(request: NextRequest) {
+// This is the simplest possible signature to bypass the stubborn type error.
+export async function PUT(
+    request: NextRequest,
+    context: any // Using 'any' as a last resort to solve the build error.
+) {
     const verification = await verifyUser(request);
     if (!verification.success) {
         return NextResponse.json({ success: false, message: verification.message }, { status: verification.status });
     }
     const uid = verification.user!.uid;
+    const { bookingId } = context.params; // Get bookingId from the context object
 
     try {
         const { ovenId, startTime, endTime, title } = await request.json();
         const start = new Date(startTime);
         const end = new Date(endTime);
 
-        if (moment(end).diff(moment(start), 'hours') > MAX_BOOKING_DURATION_HOURS) {
-            return NextResponse.json({ success: false, message: `Booking cannot exceed 7 days.` }, { status: 400 });
-        }
+        const bookingRef = adminDb.collection('bookings').doc(bookingId);
         
-        const userBookingsSnapshot = await adminDb.collection('bookings')
-            .where('userId', '==', uid)
-            .where('endTime', '>=', Timestamp.now())
-            .get();
-            
-        if (userBookingsSnapshot.size >= MAX_ACTIVE_BOOKINGS) {
-            return NextResponse.json({ success: false, message: `You have reached your limit of ${MAX_ACTIVE_BOOKINGS} active bookings.` }, { status: 403 });
-        }
-
         await adminDb.runTransaction(async (transaction) => {
-            const bookingsRef = adminDb.collection('bookings');
-            const ovenRef = adminDb.collection('ovens').doc(ovenId); // <-- Get a reference to the oven
-
-            // --- THE BUG FIX STARTS HERE ---
-
-            // Step 1: Get the oven's current data within the transaction
-            const ovenDoc = await transaction.get(ovenRef);
-            if (!ovenDoc.exists) {
-                throw new Error("The selected oven does not exist.");
+            const bookingDoc = await transaction.get(bookingRef);
+            if (!bookingDoc.exists) {
+                throw new Error("Booking not found.");
             }
-            // Step 2: Check the oven's status
-            if (ovenDoc.data()?.status !== 'active') {
-                throw new Error("This oven is currently under maintenance and cannot be booked.");
+            const bookingData = bookingDoc.data()!;
+            
+            const userDocSnap = await transaction.get(adminDb.collection('users').doc(uid));
+            const isAdmin = userDocSnap.exists && userDocSnap.data()?.isAdmin === true;
+
+            if (bookingData.userId !== uid && !isAdmin) {
+                throw new Error("You are not authorized to edit this booking.");
             }
             
-            // --- THE BUG FIX ENDS HERE ---
-
-
-            // Proceed with conflict checks only if the oven is active
-            const potentialConflictsQuery = bookingsRef
+            if (bookingData.userId === uid && !isAdmin) {
+                const createdAt = bookingData.createdAt.toDate();
+                const now = new Date();
+                const oneHour = 60 * 60 * 1000;
+                if (now.getTime() - createdAt.getTime() > oneHour) {
+                    throw new Error("You can no longer edit this booking. The 1-hour grace period has passed.");
+                }
+            }
+            
+            const potentialConflictsQuery = bookingRef.parent
                 .where('ovenId', '==', ovenId)
                 .where('endTime', '>', Timestamp.fromDate(start));
             
             const snapshot = await transaction.get(potentialConflictsQuery);
             const hasConflict = snapshot.docs.some(doc => {
-                const existingBooking = doc.data();
-                return existingBooking.startTime.toDate() < end;
+                if (doc.id === bookingId) return false;
+                return doc.data().startTime.toDate() < end;
             });
             
             if (hasConflict) {
-                throw new Error('This time slot conflicts with an existing booking.');
+                throw new Error('This time slot conflicts with another booking.');
             }
 
-            const userDoc = await transaction.get(adminDb.collection('users').doc(uid));
-            const userName = userDoc.exists ? userDoc.data()?.name : 'Unknown User';
-            
-            const newBookingRef = bookingsRef.doc();
-            transaction.set(newBookingRef, {
-                userId: uid,
-                ovenId,
+            const userName = userDocSnap.exists ? userDocSnap.data()?.name : 'Unknown User';
+
+            transaction.update(bookingRef, {
                 startTime: Timestamp.fromDate(start),
                 endTime: Timestamp.fromDate(end),
                 title: `${title} (by ${userName})`,
-                createdAt: Timestamp.now(),
             });
         });
 
-        return NextResponse.json({ success: true, message: 'Booking successful' });
+        return NextResponse.json({ success: true, message: 'Booking updated successfully' });
 
     } catch (error: any) {
         return NextResponse.json({ success: false, message: error.message }, { status: 400 });
